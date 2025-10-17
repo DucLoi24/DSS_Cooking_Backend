@@ -76,7 +76,7 @@ MIDDLEWARE = [
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
-    "https://dss-cooking-frontend.vercel.app/",
+    "https://dss-cooking-frontend.vercel.app",
 ]
 
 ROOT_URLCONF = 'DSS_Cooking_backend.urls'

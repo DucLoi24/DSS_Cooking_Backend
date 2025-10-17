@@ -98,7 +98,7 @@ class ShoppingListItems(models.Model):
         db_table = 'shopping_list_items'
 
 class FavoriteRecipes(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, models.DO_NOTHING, primary_key=True)
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, models.DO_NOTHING, primary_key=True)
     recipe = models.ForeignKey('Recipes', models.DO_NOTHING)
 
     class Meta:
