@@ -4,23 +4,30 @@ from django.db import models
 # Các model nội bộ của Django không cần định nghĩa ở đây
 
 class Ingredients(models.Model):
-    # Định nghĩa các lựa chọn cho status theo chuẩn Django
+    # Định nghĩa các lựa chọn cho status
     class Status(models.TextChoices):
-        PENDING = 'pending_approval', 'Chờ duyệt'
+        PENDING = 'pending', 'Chờ duyệt'
         APPROVED = 'approved', 'Đã duyệt'
         REJECTED = 'rejected', 'Bị từ chối'
+
+    # Định nghĩa các lựa chọn cho category (khớp với ENUM trong CSDL)
+    class Category(models.TextChoices):
+        PROTEIN = 'protein', 'Đạm'
+        VEGETABLE = 'vegetable', 'Rau củ'
+        CARB = 'carb', 'Tinh bột'
+        SPICE = 'spice', 'Gia vị'
+        STAPLE = 'staple', 'Gia vị cơ bản'
+        OTHER = 'other', 'Khác'
 
     name = models.CharField(unique=True, max_length=255)
     description = models.TextField(blank=True, null=True)
     submitted_by = models.ForeignKey(settings.AUTH_USER_MODEL, models.DO_NOTHING, db_column='submitted_by_id', blank=True, null=True)
     
-    # Sửa TextField thành CharField với choices, khớp với ENUM trong CSDL
-    status = models.CharField(
-        max_length=20,
-        choices=Status.choices,
-        default=Status.PENDING
-    )
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     
+    # Thêm trường category vào model
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.OTHER)
+
     created_at = models.DateTimeField(auto_now_add=True, blank=True, null=True)
     updated_at = models.DateTimeField(auto_now=True, blank=True, null=True)
 

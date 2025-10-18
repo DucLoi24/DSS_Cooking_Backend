@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from django.db.models import Count, Q
+from django.db.models import Count, Q, F, Case, When, FloatField, Sum, Value
 # Import các công cụ để bắt lỗi
 from django.db import utils
 from rest_framework.exceptions import ValidationError
@@ -14,12 +14,10 @@ from .serializers import (
     RecipeSerializer, UserSerializer, 
     PantryItemReadSerializer, PantryItemWriteSerializer,
     IngredientSerializer, RecipeCreateSerializer, MyRecipeSerializer,
-    RecipeDetailSerializer, ShoppingListItemSerializer
+    RecipeDetailSerializer, ShoppingListItemSerializer, IngredientContributeSerializer
 )
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-# --- CÁC VIEW CŨ (Không thay đổi) ---
-# ... (UserRegisterView, LoginView, etc. giữ nguyên)
 class UserRegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -35,12 +33,20 @@ class UserDetailView(generics.RetrieveAPIView):
 
 class IngredientListCreateView(generics.ListCreateAPIView):
     queryset = Ingredients.objects.filter(status='approved')
-    serializer_class = IngredientSerializer
+    
+    # Dùng serializer khác nhau cho việc đọc và ghi
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return IngredientContributeSerializer
+        return IngredientSerializer
+    
     def get_permissions(self):
         if self.request.method == 'POST':
             return [IsAuthenticated()]
         return [AllowAny()]
+        
     def perform_create(self, serializer):
+        # Logic không đổi, serializer đã lo việc lấy 'category'
         serializer.save(submitted_by=self.request.user, status='pending')
 
 class RecipeListCreateView(generics.ListCreateAPIView):
@@ -156,31 +162,57 @@ class PantryDetailView(generics.RetrieveUpdateDestroyAPIView):
         return PantryItems.objects.filter(user=self.request.user)
 
 class SuggestionView(generics.ListAPIView):
-    # ... (giữ nguyên)
     serializer_class = RecipeSerializer
     permission_classes = [IsAuthenticated]
+
     def get_queryset(self):
         user = self.request.user
-        pantry_ingredient_ids = PantryItems.objects.filter(user=user).values_list('ingredient_id', flat=True)
+        pantry_ingredient_ids = list(PantryItems.objects.filter(user=user).values_list('ingredient_id', flat=True))
+
         if not pantry_ingredient_ids:
             return Recipes.objects.none()
-        searchable_recipes = Recipes.objects.filter(
-            Q(status='public') | Q(author=user)
-        ).distinct()
-        recipes_with_missing_count = searchable_recipes.annotate(
-            missing_ingredients_count=Count(
-                'ingredients',
-                filter=~Q(ingredients__ingredient_id__in=pantry_ingredient_ids)
+
+        favorite_author_ids = list(FavoriteRecipes.objects.filter(user=user).values_list('recipe__author_id', flat=True).distinct())
+
+        WEIGHTS = {
+            Ingredients.Category.PROTEIN: 100,
+            Ingredients.Category.CARB: 80,
+            Ingredients.Category.VEGETABLE: 50,
+            Ingredients.Category.SPICE: 10,
+            Ingredients.Category.STAPLE: 1,
+            Ingredients.Category.OTHER: 25,
+        }
+        when_expressions = [When(ingredients__ingredient__category=cat, then=Value(weight)) for cat, weight in WEIGHTS.items()]
+
+        searchable_recipes = Recipes.objects.filter(Q(status='public') | Q(author=user)).distinct()
+
+        # --- "CHIẾN LƯỢC MỚI: CHIA ĐỂ TRỊ" ---
+        # BƯỚC 1: Annotate từng thành phần điểm số một cách riêng lẻ
+        recipes_with_components = searchable_recipes.annotate(
+            match_count=Count('ingredients', filter=Q(ingredients__ingredient_id__in=pantry_ingredient_ids)),
+            missing_penalty_score=Sum(
+                Case(*when_expressions, default=Value(25.0), output_field=FloatField()),
+                filter=~Q(ingredients__ingredient_id__in=pantry_ingredient_ids),
+                default=Value(0.0)
+            ),
+            author_bonus=Case(
+                When(author_id__in=favorite_author_ids, then=Value(50.0)),
+                default=Value(0.0),
+                output_field=FloatField()
             )
         )
-        suggested_recipes = recipes_with_missing_count.filter(missing_ingredients_count__lte=2)
-        ranked_recipes = suggested_recipes.annotate(
-            pantry_match_count=Count(
-                'ingredients',
-                filter=Q(ingredients__ingredient_id__in=pantry_ingredient_ids)
+
+        # BƯỚC 2: Dùng một annotate cuối cùng, đơn giản, chỉ để tính toán
+        # từ các thành phần đã được annotate ở trên.
+        recipes_with_final_score = recipes_with_components.annotate(
+            score=(
+                (F('match_count') * Value(20.0)) - F('missing_penalty_score') + F('author_bonus')
             )
-        ).order_by('missing_ingredients_count', '-pantry_match_count')
-        return ranked_recipes
+        )
+
+        # BƯỚC 3: Lọc và sắp xếp như cũ
+        suggested_recipes = recipes_with_final_score.filter(score__gte=0)
+        return suggested_recipes.order_by('-score')
 
 # --- CÁC VIEW CÒN LẠI (giữ nguyên) ---
 # ... (FavoriteToggleView, FavoriteListView, ShoppingListView, ShoppingListDetailView)

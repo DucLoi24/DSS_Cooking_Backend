@@ -107,3 +107,9 @@ class IngredientSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ingredients
         fields = ['id', 'name', 'description']
+
+class IngredientContributeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Ingredients
+        # Cho phép người dùng gửi lên 3 trường này
+        fields = ['name', 'description', 'category']
