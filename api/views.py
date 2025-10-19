@@ -1,4 +1,5 @@
-from rest_framework import generics
+from rest_framework import generics, filters
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -51,6 +52,21 @@ class IngredientListCreateView(generics.ListCreateAPIView):
 
 class RecipeListCreateView(generics.ListCreateAPIView):
     queryset = Recipes.objects.filter(status='public')
+    
+    # Kích hoạt các bộ lọc
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    
+    # Các trường có thể lọc chính xác (ví dụ: /api/recipes/?difficulty=easy)
+    filterset_fields = ['difficulty', 'author']
+    
+    # Các trường có thể tìm kiếm (ví dụ: /api/recipes/?search=bò kho)
+    # ^: tìm kiếm bắt đầu bằng, =: khớp chính xác, @: tìm kiếm toàn văn, $: regex
+    search_fields = ['title', 'description', 'ingredients__ingredient__name']
+    
+    # Các trường có thể sắp xếp (ví dụ: /api/recipes/?ordering=-created_at)
+    ordering_fields = ['cooking_time_minutes', 'created_at']
+
+
     def get_serializer_class(self):
         if self.request.method == 'POST':
             return RecipeCreateSerializer
