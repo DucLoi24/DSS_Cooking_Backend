@@ -66,7 +66,6 @@ class RecipeListCreateView(generics.ListCreateAPIView):
     # Các trường có thể sắp xếp (ví dụ: /api/recipes/?ordering=-created_at)
     ordering_fields = ['cooking_time_minutes', 'created_at']
 
-
     def get_serializer_class(self):
         if self.request.method == 'POST':
             return RecipeCreateSerializer
@@ -183,6 +182,7 @@ class SuggestionView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        mode = self.request.query_params.get('mode', 'strict')
         pantry_ingredient_ids = list(PantryItems.objects.filter(user=user).values_list('ingredient_id', flat=True))
 
         if not pantry_ingredient_ids:
@@ -195,7 +195,6 @@ class SuggestionView(generics.ListAPIView):
             Ingredients.Category.CARB: 80,
             Ingredients.Category.VEGETABLE: 50,
             Ingredients.Category.SPICE: 10,
-            Ingredients.Category.STAPLE: 1,
             Ingredients.Category.OTHER: 25,
         }
         when_expressions = [When(ingredients__ingredient__category=cat, then=Value(weight)) for cat, weight in WEIGHTS.items()]
@@ -205,17 +204,18 @@ class SuggestionView(generics.ListAPIView):
         # --- "CHIẾN LƯỢC MỚI: CHIA ĐỂ TRỊ" ---
         # BƯỚC 1: Annotate từng thành phần điểm số một cách riêng lẻ
         recipes_with_components = searchable_recipes.annotate(
-            match_count=Count('ingredients', filter=Q(ingredients__ingredient_id__in=pantry_ingredient_ids)),
+            match_count=Count('ingredients', filter=Q(ingredients__ingredient_id__in=pantry_ingredient_ids) & ~Q(ingredients__ingredient__category=Ingredients.Category.STAPLE)),
             missing_penalty_score=Sum(
                 Case(*when_expressions, default=Value(25.0), output_field=FloatField()),
-                filter=~Q(ingredients__ingredient_id__in=pantry_ingredient_ids),
+                filter=~Q(ingredients__ingredient_id__in=pantry_ingredient_ids) & ~Q(ingredients__ingredient__category=Ingredients.Category.STAPLE),
                 default=Value(0.0)
             ),
             author_bonus=Case(
                 When(author_id__in=favorite_author_ids, then=Value(50.0)),
                 default=Value(0.0),
                 output_field=FloatField()
-            )
+            ),
+            missing_count=Count('ingredients', filter=~Q(ingredients__ingredient_id__in=pantry_ingredient_ids) & ~Q(ingredients__ingredient__category=Ingredients.Category.STAPLE))
         )
 
         # BƯỚC 2: Dùng một annotate cuối cùng, đơn giản, chỉ để tính toán
@@ -225,10 +225,14 @@ class SuggestionView(generics.ListAPIView):
                 (F('match_count') * Value(20.0)) - F('missing_penalty_score') + F('author_bonus')
             )
         )
-
+        
         # BƯỚC 3: Lọc và sắp xếp như cũ
-        suggested_recipes = recipes_with_final_score.filter(score__gte=0)
-        return suggested_recipes.order_by('-score')
+        if mode == 'strict':
+            final_recipes = recipes_with_final_score.filter(missing_count=0)
+        else:
+            final_recipes = recipes_with_final_score.filter(missing_count__lte=2, score__gte=0)
+
+        return final_recipes.order_by('-score')
 
 # --- CÁC VIEW CÒN LẠI (giữ nguyên) ---
 # ... (FavoriteToggleView, FavoriteListView, ShoppingListView, ShoppingListDetailView)
