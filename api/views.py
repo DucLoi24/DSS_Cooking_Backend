@@ -185,11 +185,16 @@ class SuggestionView(generics.ListAPIView):
         mode = self.request.query_params.get('mode', 'strict')
         pantry_ingredient_ids = list(PantryItems.objects.filter(user=user).values_list('ingredient_id', flat=True))
 
-        if not pantry_ingredient_ids:
+        if not pantry_ingredient_ids and mode == 'strict':
             return Recipes.objects.none()
+            
+        # TÍNH NĂNG TẦNG 4: Lấy "DANH SÁCH ĐEN" từ frontend
+        excluded_ingredient_ids = self.request.query_params.getlist('exclude')
 
+        # TÍNH NĂNG TẦNG 3: Logic Điểm Thiện cảm
         favorite_author_ids = list(FavoriteRecipes.objects.filter(user=user).values_list('recipe__author_id', flat=True).distinct())
 
+        # TÍNH NĂNG TẦNG 2: Logic Điểm Phạt
         WEIGHTS = {
             Ingredients.Category.PROTEIN: 100,
             Ingredients.Category.CARB: 80,
@@ -199,10 +204,18 @@ class SuggestionView(generics.ListAPIView):
         }
         when_expressions = [When(ingredients__ingredient__category=cat, then=Value(weight)) for cat, weight in WEIGHTS.items()]
 
+        # BƯỚC 1: Mở rộng phạm vi tìm kiếm (public HOẶC của mình)
         searchable_recipes = Recipes.objects.filter(Q(status='public') | Q(author=user)).distinct()
 
-        # --- "CHIẾN LƯỢC MỚI: CHIA ĐỂ TRỊ" ---
-        # BƯỚC 1: Annotate từng thành phần điểm số một cách riêng lẻ
+        # BƯỚC 2: "BỘ LỌC KIÊNG CỮ"
+        # Áp dụng "DANH SÁCH ĐEN" ngay từ đầu.
+        if excluded_ingredient_ids:
+            searchable_recipes = searchable_recipes.exclude(
+                ingredients__ingredient_id__in=excluded_ingredient_ids
+            )
+
+        # BƯỚC 3: "CHIẾN LƯỢC CHIA ĐỂ TRỊ" (Sửa lỗi FieldError)
+        # 3a. Annotate từng thành phần điểm số một cách riêng lẻ
         recipes_with_components = searchable_recipes.annotate(
             match_count=Count('ingredients', filter=Q(ingredients__ingredient_id__in=pantry_ingredient_ids) & ~Q(ingredients__ingredient__category=Ingredients.Category.STAPLE)),
             missing_penalty_score=Sum(
@@ -218,15 +231,14 @@ class SuggestionView(generics.ListAPIView):
             missing_count=Count('ingredients', filter=~Q(ingredients__ingredient_id__in=pantry_ingredient_ids) & ~Q(ingredients__ingredient__category=Ingredients.Category.STAPLE))
         )
 
-        # BƯỚC 2: Dùng một annotate cuối cùng, đơn giản, chỉ để tính toán
-        # từ các thành phần đã được annotate ở trên.
+        # 3b. Dùng một annotate cuối cùng, đơn giản, chỉ để tính toán
         recipes_with_final_score = recipes_with_components.annotate(
             score=(
                 (F('match_count') * Value(20.0)) - F('missing_penalty_score') + F('author_bonus')
             )
         )
         
-        # BƯỚC 3: Lọc và sắp xếp như cũ
+        # BƯỚC 4: Lọc theo chế độ
         if mode == 'strict':
             final_recipes = recipes_with_final_score.filter(missing_count=0)
         else:
