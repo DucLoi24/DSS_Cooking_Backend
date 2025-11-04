@@ -255,18 +255,26 @@ class FavoriteToggleView(APIView):
             recipe = Recipes.objects.get(pk=pk)
         except Recipes.DoesNotExist:
             return Response({'error': 'Công thức không tồn tại.'}, status=status.HTTP_404_NOT_FOUND)
-        favorite, created = FavoriteRecipes.objects.get_or_create(user=self.request.user, recipe=recipe)
-        if created:
-            return Response({'message': 'Đã thêm vào danh sách yêu thích.'}, status=status.HTTP_201_CREATED)
-        else:
+        
+        # Kiểm tra xem món ăn đã được yêu thích chưa sử dụng filter thay vì get
+        favorite_exists = FavoriteRecipes.objects.filter(user=self.request.user, recipe=recipe).exists()
+        if favorite_exists:
             return Response({'message': 'Công thức này đã có trong danh sách yêu thích.'}, status=status.HTTP_200_OK)
+        else:
+            # Tạo bản ghi yêu thích mới
+            FavoriteRecipes.objects.create(user=self.request.user, recipe=recipe)
+            return Response({'message': 'Đã thêm vào danh sách yêu thích.'}, status=status.HTTP_201_CREATED)
+
     def delete(self, request, pk, format=None):
         try:
-            favorite = FavoriteRecipes.objects.get(user=self.request.user, recipe_id=pk)
-            favorite.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        except FavoriteRecipes.DoesNotExist:
-            return Response({'error': 'Công thức này không có trong danh sách yêu thích của bạn.'}, status=status.HTTP_404_NOT_FOUND)
+            # Sử dụng filter + delete thay vì get + delete để tránh vấn đề với primary key
+            deleted_count, _ = FavoriteRecipes.objects.filter(user=self.request.user, recipe_id=pk).delete()
+            if deleted_count > 0:
+                return Response(status=status.HTTP_204_NO_CONTENT)
+            else:
+                return Response({'error': 'Công thức này không có trong danh sách yêu thích của bạn.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': 'Đã có lỗi xảy ra khi xóa khỏi danh sách yêu thích.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class FavoriteListView(generics.ListAPIView):
     serializer_class = RecipeSerializer

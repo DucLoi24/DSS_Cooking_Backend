@@ -105,10 +105,13 @@ class ShoppingListItems(models.Model):
         db_table = 'shopping_list_items'
 
 class FavoriteRecipes(models.Model):
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, models.DO_NOTHING, primary_key=True)
-    recipe = models.ForeignKey('Recipes', models.DO_NOTHING)
+    # Bảng đã được cập nhật để có cột id làm primary key
+    id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, models.DO_NOTHING, db_column='user_id')
+    recipe = models.ForeignKey('Recipes', models.DO_NOTHING, db_column='recipe_id')
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        managed = False
+        managed = False  # Django không quản lý schema
         db_table = 'favorite_recipes'
-        unique_together = (('user', 'recipe'),)
+        unique_together = (('user', 'recipe'),)  # Duy trì ràng buộc duy nhất
